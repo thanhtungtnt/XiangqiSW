@@ -89,7 +89,131 @@ old_position = None
 valid_moves: list[tuple[int, int]] = []
 # Track previous flip state to detect changes
 previous_flipped = Settings.FLIPPED
+# --- LOGIC QUÉT THƯ MỤC (BATCH DETECTION) ---
+batch_image_list = []
+batch_fens = []
+batch_current_idx = 0
+batch_needs_next = False
 
+def parse_fen_to_matrix(fen: str):
+    """Chuyển chuỗi FEN thành ma trận 10x9 để dễ so sánh"""
+    rows = fen.split()[0].split('/')
+    matrix = []
+    for row in rows:
+        matrix_row = []
+        for ch in row:
+            if ch.isdigit():
+                matrix_row.extend(['.'] * int(ch))
+            else:
+                matrix_row.append(ch)
+        matrix.append(matrix_row)
+    return matrix
+
+def process_fens_to_moves():
+    """Thuật toán dò tìm nước đi giữa các bức ảnh và ghi vào Biên Bản"""
+    global batch_fens, game_tree, navigation, chess_board, selected_piece, valid_moves
+    
+    if len(batch_fens) < 2:
+        ui_renderer.show_notification("Cần ít nhất 2 ảnh để tạo thành nước đi!")
+        return
+        
+    print(f"\n--- ĐANG PHÂN TÍCH {len(batch_fens)} MÃ FEN ---")
+    
+    # Đặt lại bàn cờ bằng trạng thái của ảnh đầu tiên
+    FENHandler.from_fen(batch_fens[0], chess_board)
+    game_tree = GameDataTree()
+    navigation = Navigation(chess_board, game_tree)
+    
+    # Lặp qua từng cặp ảnh (Ảnh 1 -> Ảnh 2, Ảnh 2 -> Ảnh 3...)
+    for i in range(len(batch_fens) - 1):
+        fen1 = batch_fens[i]
+        fen2 = batch_fens[i+1]
+        
+        mat1 = parse_fen_to_matrix(fen1)
+        mat2 = parse_fen_to_matrix(fen2)
+        
+        old_pos = None
+        new_pos = None
+        is_red_turn = (chess_board.turn == 'red')
+        
+        # Quét toàn bộ bàn cờ 10x9 để tìm điểm khác biệt
+        for y in range(10):
+            for x in range(9):
+                c1 = mat1[y][x]
+                c2 = mat2[y][x]
+                if c1 != c2:
+                    # Ô đến: Có quân cờ xuất hiện, và phải ĐÚNG MÀU của phe đang tới lượt
+                    if c2 != '.' and ((is_red_turn and c2.isupper()) or (not is_red_turn and c2.islower())):
+                        new_pos = (x + 1, y)
+                    
+                    # Ô đi: Quân cờ (đúng màu) bị biến mất hoặc biến thành quân địch (bị ăn)
+                    if c1 != '.' and ((is_red_turn and c1.isupper()) or (not is_red_turn and c1.islower())):
+                        if c2 == '.' or (c2.islower() != c1.islower()):
+                            old_pos = (x + 1, y)
+        
+        # Nếu đã dò ra chính xác điểm đi và điểm đến
+        if old_pos and new_pos:
+            piece = chess_board.get_piece_at(old_pos)
+            captured = chess_board.get_piece_at(new_pos)
+            
+            if piece:
+                # Định dạng nước đi: "TênQuân (x_cũ,y_cũ) (x_mới,y_mới)"
+                move_str = f"{piece.name} ({old_pos[0]},{old_pos[1]}) ({new_pos[0]},{new_pos[1]})"
+                game_tree.add_move(chess_board.turn, move_str, "", captured_piece=captured)
+                print(f"Phát hiện nước đi {i+1}: {move_str}")
+                
+                # Di chuyển quân trên bàn cờ ảo để khớp với thực tế cho vòng lặp sau
+                chess_board.move_piece(piece.color, piece.name, new_pos)
+                chess_board.switch_turn()
+    
+    # Cập nhật và đồng bộ lại thẻ Biên Bản ở cột bên phải UI
+    if hasattr(ui_renderer, 'record_view'):
+        ui_renderer.record_view.game_tree = game_tree
+        ui_renderer.record_view.sync_with_tree()
+        
+    selected_piece = None
+    valid_moves = []
+    ui_renderer.show_notification(f"Thành công! Đã ghi {len(batch_fens)-1} nước cờ vào Biên Bản.")
+
+def process_next_batch_image():
+    global batch_image_list, batch_current_idx, batch_fens
+    
+    if batch_current_idx < len(batch_image_list):
+        img_path = batch_image_list[batch_current_idx]
+        ui_renderer.show_notification(f"Đang quét ảnh {batch_current_idx + 1}/{len(batch_image_list)}...")
+        
+        # Gọi AI nhận diện ảnh hiện tại
+        detect_service.detect_async(
+            img_path,
+            is_temp=False,
+            on_notify=lambda msg: None, # Tạm tắt thông báo lẻ để không bị spam màn hình
+            on_result=_on_batch_detect_result
+        )
+    else:
+        ui_renderer.show_notification("Đã quét xong toàn bộ ảnh! Xem log ở Terminal.")
+        # Hoàn thành bước 3, in ra màn hình để kiểm tra
+        print(f"\n--- ĐÃ LẤY THÀNH CÔNG {len(batch_fens)} MÃ FEN ---")
+        for i, fen in enumerate(batch_fens):
+            print(f"Ảnh {i+1}: {fen}")
+
+def _on_batch_detect_result(results: list) -> None:
+    global batch_current_idx, batch_fens, batch_needs_next
+    try:
+        print(f"-> [Debug] AI đã đọc xong ảnh {batch_current_idx + 1}, đang xếp quân và lấy FEN...")
+        reconstruct_board(results, chess_board)
+        
+        current_fen = FENHandler.to_fen(chess_board)
+        batch_fens.append(current_fen)
+        print(f"-> [Debug] Thành công lấy FEN ảnh {batch_current_idx + 1}: {current_fen}")
+        
+        batch_current_idx += 1
+        
+        # THAY ĐỔI QUAN TRỌNG: Không gọi process_next_batch_image() nữa
+        # Thay vào đó, ta phất cờ yêu cầu luồng chính chạy tiếp
+        batch_needs_next = True
+        
+    except Exception as e:
+        print(f"\n!!! LỖI RỒI TẠI ẢNH {batch_current_idx + 1}: {e} !!!\n")
 
 def _on_detect_result(results: list) -> None:
     """Callback chạy trong detection thread khi nhận diện thành công."""
@@ -238,6 +362,19 @@ while True:
                     # os.system("cls")
                     # os.system("python App/app.py")
                     sys.exit()
+                elif menu_item_idx == 7:
+                    from utils.image_upload import open_folder_dialog, get_sorted_images_from_folder
+                    folder = open_folder_dialog()
+                    if folder:
+                        images = get_sorted_images_from_folder(folder)
+                        if images:
+                            batch_image_list = images
+                            batch_fens = []
+                            batch_current_idx = 0
+                            ui_renderer.show_notification(f"Bắt đầu quét {len(images)} ảnh...")
+                            process_next_batch_image()
+                        else:
+                            ui_renderer.show_notification("Thư mục rỗng hoặc không có ảnh hợp lệ!")
                 continue
             # Close menu if click is outside the sidebar (after checking other buttons)
             if ui_renderer.menu_is_open:

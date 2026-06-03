@@ -27,7 +27,7 @@ class UIRenderer:
         # Menu dropdown state
         self.menu_is_open: bool = False
         # self.menu_items = ["Tạo mới", "Sắp quân", "Sao chép FEN", "Dán FEN", "Nhập FEN", "Mở ván cờ","Lưu ván cờ", "Thoát"]
-        self.menu_items = ["Tạo mới", "Sắp quân", "Sao chép FEN", "Dán FEN", "Mở ván cờ","Lưu ván cờ", "Thoát"]
+        self.menu_items = ["Tạo mới", "Sắp quân", "Sao chép FEN", "Dán FEN", "Mở ván cờ","Lưu ván cờ", "Thoát", "Quét Thư Mục"]
         self.menu_item_rects: list[pygame.Rect] = []
         # Menu animation state (encapsulated inside draw_menu_sidebar)
         self._menu_anim_start: int = 0  # 0 = no animation, >0 = animation start timestamp

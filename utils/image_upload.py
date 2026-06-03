@@ -4,16 +4,46 @@ import os
 import sys
 import subprocess
 from typing import Optional
+import re
 
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _VIEWER_SCRIPT = os.path.join(_PROJECT_ROOT, "utils", "_image_viewer.py")
 _FILE_DIALOG_SCRIPT = os.path.join(_PROJECT_ROOT, "utils", "_file_dialog.py")
+# Thêm định nghĩa đường dẫn tới file dialog mới tạo
+_FOLDER_DIALOG_SCRIPT = os.path.join(_PROJECT_ROOT, "utils", "_folder_dialog.py")
 
 _SUPPORTED_FILETYPES = [
     ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tiff"),
     ("All files", "*.*"),
 ]
+
+def open_folder_dialog() -> Optional[str]:
+    """Mở hộp thoại chọn thư mục bằng subprocess để tránh crash."""
+    try:
+        out = subprocess.check_output(
+            [sys.executable, _FOLDER_DIALOG_SCRIPT],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        path = (out or "").strip()
+        return path or None
+    except Exception:
+        return None
+
+def get_sorted_images_from_folder(folder_path: str) -> list[str]:
+    """Lọc ảnh và sắp xếp tự nhiên (1, 2... 10 thay vì 1, 10, 2)."""
+    valid_exts = {'.png', '.jpg', '.jpeg'}
+    image_files = []
+    
+    for f in os.listdir(folder_path):
+        if os.path.splitext(f)[1].lower() in valid_exts:
+            image_files.append(os.path.join(folder_path, f))
+            
+    # "Phép thuật" Regex giúp sắp xếp số chuẩn xác
+    image_files.sort(key=lambda x: [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', x)])
+    
+    return image_files
 
 
 def open_image_dialog() -> Optional[str]:
